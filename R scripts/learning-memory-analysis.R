@@ -20,6 +20,9 @@ library(data.table)
 library("rockchalk")
 library(truncnorm)
 library("BSDA")
+library(ggtext)
+library(grid)
+
 
 ## Set working directory to the file location using Rstudio API
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
@@ -27,15 +30,15 @@ setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 ## Prepare group name
 rename_wine_or_lees = function(x) {
   if(substr(x,start=1,stop=2) == "FW"){
-    return("Field Wine")
+    return("Wine")
   } else if (substr(x,start=1,stop=2) == "FL") {
-    return("Field Lees")
+    return("Lees")
   } else if(substr(x,start=1,stop=2) == "LW") {
-    return("Lab Wine")
+    return("Wine")
   } else if(substr(x,start=1,stop=2) == "LL") {
-    return("Lab Lees")
+    return("Lees")
   } else {
-    return("Control")
+    return(x)
   }
 }
 
@@ -47,549 +50,258 @@ rename_concentration = function(x) {
   } else if(substr(x,start=3,stop=3) == "H") {
     return("High")
   } else {
-    return(x)
+    return("Control")
   }
 }
 
-##########################################################################################################
-########################################### SHORT TERM MEMORY ############################################
-##########################################################################################################
+t_test_means = function(df.norm.6h, X, Y="OP50", alternative="less") {
+  x.mean = df.norm.6h[df.norm.6h$Treatment==X, "mean.CI"]
+  x.sem = df.norm.6h[df.norm.6h$Treatment==X,"std.CI"]
+  x.obs = 3
+  
+  y.mean = df.norm.6h[df.norm.6h$Treatment==Y,"mean.CI"]
+  y.sem = df.norm.6h[df.norm.6h$Treatment==Y,"std.CI"]
+  y.obs = 3
+  
+  x = tsum.test(x.mean, x.sem, x.obs,
+                y.mean, y.sem, y.obs,
+                alternative = alternative)
+  return(x)
+}
 
-## Load survival csv file
-stmraw.csv = read.csv("Learning & Memory - STM Raw.csv", header = T)
-
-## 1. Without toxin 
-stmraw.csv$group = lapply(stmraw.csv$treatment, rename_wine_or_lees)
-stmraw.csv[stmraw.csv == "Untreated"] = "OP50"
-stmraw.csv$CI_index = (stmraw.csv$N_butanone - stmraw.csv$N_EtoH) / ((stmraw.csv$N_total - stmraw.csv$N_origin) + 1e-6)
-
-## Factor categories
-stmraw.csv$treatment <- factor(stmraw.csv$treatment, levels = c('OP50','EGCG','DMSO',  'Metab',
-                                                                'FWL', 'FWM', 'FWH',
-                                                                'LWL', 'LWM', 'LWH',
-                                                                'FLL', 'FLM', 'FLH',
-                                                                'LLL', 'LLM', 'LLH'))
-stmraw.csv$group <- factor(stmraw.csv$group, levels = c('Control','Field Wine', 'Lab Wine',
-                                                        'Field Lees', 'Lab Lees'))
-
-# healthy.baseline.mean = mean(stmraw.csv$CI_index[stmraw.csv == 'U'])
-# healthy.baseline.std = sd(stmraw.csv$CI_index[stmraw.csv == 'U'])
-stmraw.csv$type = "(-) 12% NT"
-
-
-## Visualize boxplots
-color_scheme = c("#84d94f", "#ffa600", "#f25c78",  "#b64cdf", "#fa5cf2")
-
-## 2. With toxin
-stmraw.toxin.csv = read.csv("Learning & Memory - STMTox Raw.csv", header = T)
-stmraw.toxin.csv[stmraw.toxin.csv == "Untreated w/ toxin"] = "OP50"
-stmraw.toxin.csv[stmraw.toxin.csv == "Untreated w/o toxin"] = "U"
-stmraw.toxin.csv$group = lapply(stmraw.toxin.csv$treatment, rename_wine_or_lees)
-
-stmraw.toxin.csv$CI_index = (stmraw.toxin.csv$N_butanone - stmraw.toxin.csv$N_EtoH) / ((stmraw.toxin.csv$N_total - stmraw.toxin.csv$N_origin) + 1e-6)
-
-## Factor categories
-stmraw.toxin.csv$treatment <- factor(stmraw.toxin.csv$treatment, levels = c('U', 'OP50','EGCG','DMSO',  'Metab',
-                                                                            'FWL', 'FWM', 'FWH',
-                                                                            'LWL', 'LWM', 'LWH',
-                                                                            'FLL', 'FLM', 'FLH',
-                                                                            'LLL', 'LLM', 'LLH'))
-stmraw.toxin.csv$group <- factor(stmraw.toxin.csv$group, levels = c('Control','Field Wine', 'Lab Wine',
-                                                                    'Field Lees', 'Lab Lees'))
-
-# healthy.baseline.mean = mean(stmraw.toxin.csv$CI_index[stmraw.toxin.csv == 'U'])
-# healthy.baseline.std = sd(stmraw.toxin.csv$CI_index[stmraw.toxin.csv == 'U'])
-
-color_scheme = c("#84d94f", "#ffa600", "#f25c78",  "#b64cdf", "#fa5cf2")
-stmraw.toxin.csv = subset(stmraw.toxin.csv, treatment != 'U')
-stmraw.toxin.csv$type = "(+) 12% NT"
-
-
-## Short-term controls
-short.term.csv = rbind(stmraw.csv, stmraw.toxin.csv)
-
-## Box plot
-short.term.summary <- short.term.csv %>% 
-  group_by(treatment, group, type) %>%
-  summarise(mean.CI_index = mean(CI_index),
-            sem.CI_index = sd(CI_index),
-            obs.raw = n()) %>%
-  as.data.frame()
-
-## Control only
-short.term.summary.control = short.term.summary[short.term.summary$group == "Control",]
-
-## Barplot
-short.term.summary.control = short.term.summary.control[short.term.summary.control$treatment != "Metab",]
-x = ggplot(short.term.summary.control, aes(fill=type, y=mean.CI_index, x=treatment)) +
-  theme_classic() + labs(x = '', y = 'Chemotaxis Index (C.I)') +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("OP50", "0.01% EGCG","0.1% DMSO")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  scale_fill_manual('',values=c("#f59541","#c750c1")) +
-  theme(axis.text.x = element_text(color="black", size=12),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        legend.key.size = unit(0.8, 'cm'),
-        legend.text = element_text(size=13),
-        axis.title.y = element_text(size=15)
-        
-  ) 
-x
-
-######## STATISTICS FOR SHORT TERM MEMORY ########
-## Unpaired t-test between +/- 12% NT
-## A. OP50
-tox_norm1 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "OP50" & type == "(+) 12% NT")[,"mean.CI_index"],2),
-                        sd = round(subset(short.term.summary.control, treatment == "OP50" & type == "(+) 12% NT")[,"sem.CI_index"],2)
-                    )) ## 0.16 +/- 0.23
-
-notox_norm1 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "OP50" & type == "(-) 12% NT")[,"mean.CI_index"],2),
-                    sd = round(subset(short.term.summary.control, treatment == "OP50" & type == "(-) 12% NT")[,"sem.CI_index"],2)
-                    ))  ## 0.81 +/- 0.01
-
-t.test(tox_norm1, notox_norm1) ##  p < 0.0001
-# t.test(subset(short.term.csv, treatment == "OP50" & type == "(+) 12% NT")[,"CI_index"],
-#        subset(short.term.csv, treatment == "OP50" & type == "(-) 12% NT")[,"CI_index"])
-
-
-## B. DMSO
-# tox_norm2 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(+) 12% NT")[,"mean.CI_index"],2),
-#                     sd = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(+) 12% NT")[,"sem.CI_index"],2)
-# )) ## 0.46 +/- 0.-4
-# 
-# notox_norm2 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(-) 12% NT")[,"mean.CI_index"],2),
-#                       sd = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(-) 12% NT")[,"sem.CI_index"],2)
-# ))  ## 0.72 +/- 0.02
-# t.test(tox_norm2, notox_norm2) ##  p < 0.0001
-t.test(subset(short.term.csv, treatment == "DMSO" & type == "(+) 12% NT")[,"CI_index"],
-       subset(short.term.csv, treatment == "DMSO" & type == "(-) 12% NT")[,"CI_index"])
-
-
-## C. EGCG
-t.test(subset(short.term.csv, treatment == "EGCG" & type == "(+) 12% NT")[,"CI_index"],
-       subset(short.term.csv, treatment == "EGCG" & type == "(-) 12% NT")[,"CI_index"])
-# tox_norm3 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "EGCG" & type == "(+) 12% NT")[,"mean.CI_index"],2),
-#                     sd = round(subset(short.term.summary.control, treatment == "EGCG" & type == "(+) 12% NT")[,"sem.CI_index"],2)
-# )) ## 0.64 +/- 0.06
-# 
-# notox_norm3 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "EGCG" & type == "(-) 12% NT")[,"mean.CI_index"],2),
-#                       sd = round(subset(short.term.summary.control, treatment == "EGCG" & type == "(-) 12% NT")[,"sem.CI_index"],2)
-# ))  ## 0.611 +/- 0.41
-# t.test(tox_norm3, notox_norm3) ##  p < 0.0001
-
-
-## Significance bars
-## Only with ***
-op50 <- tibble(
-  x = c(0.77, 0.77, 1.23, 1.23),
-  y = c(0.83, 0.87, 0.87, 0.38)
-) ## p < 0.001
-
-dmso <- tibble(
-  x = c(2.77, 2.77, 3.23, 3.23),
-  y = c(0.77, 0.83, 0.83, 0.52)
-) ## p < 0.001
-
-
-x1 = x + 
-  annotate("text", x = 1.0, y = 0.88, label = "***", size = 6, color = "black") +
-  geom_line(data = op50, aes(x= x, y = y, group=1), inherit.aes = F) +
-  annotate("text", x = 3.0, y = 0.85, label = "***", size = 6, color = "black") +
-  geom_line(data = dmso, aes(x= x, y = y, group=1), inherit.aes = F)
-
-## Dunnet multiple comparison test among +12% NT
-control.tox = subset(short.term.csv, type == "(+) 12% NT" & group == "Control" & treatment != "Metab")
-summary(aov(formula = CI_index ~ treatment, data = control.tox))
-DunnettTest(x=control.tox$CI_index, g=control.tox$treatment)
-
-t.test(subset(short.term.csv, treatment == "EGCG" & type == "(+) 12% NT")[,"CI_index"],
-       subset(short.term.csv, treatment == "FLL" & type == "(+) 12% NT")[,"CI_index"])
-
-t.test(subset(short.term.csv, treatment == "EGCG" & type == "(+) 12% NT")[,"CI_index"],
-       subset(short.term.csv, treatment == "LLL" & type == "(+) 12% NT")[,"CI_index"])
-
-## What if -12% NT
-control.notox = subset(short.term.csv, type == "(-) 12% NT" & group == "Control" & treatment != "Metab")
-summary(aov(formula = CI_index ~ treatment, data = control.notox))
-DunnettTest(x=control.notox$CI_index, g=control.notox$treatment)
-
-egcg <- tibble(
-  x = c(1.23, 1.23, 2.23, 2.23),
-  y = c(0.91, 0.98, 0.98, 0.72)
-) ## p < 0.009 **
-
-x1 = x1 + 
-  annotate("text", x = 1.75, y = 1., label = "**", size = 6, color = "red") +
-  geom_line(data = egcg, aes(x= x, y = y, group=1), inherit.aes = F) 
-x1
-
-
-png(filename = file.path(getwd(),"/Paper-short-term.png"), width = 6, height = 4, units = "in", res = 600)
-# short.term.boxplot = ggarrange(plotlist = list(short.term.x, short.term.y), ncol = 1, nrow = 2,
-#                                labels = c("A", "B"))
-plot(x1)
-dev.off()
-print(paste("Saved at ", getwd()))
-
-
-## Tapuy extracts
-treatment.tox = subset(short.term.csv, type == "(+) 12% NT" &  !(treatment %in% c('Metab', 'DMSO')) )
-summary(aov(formula = CI_index ~ treatment, data = treatment.tox))
-DunnettTest(x=treatment.tox$CI_index, g=treatment.tox$treatment)
-
-short.term.summary.treatment = subset(short.term.summary, !(treatment %in% c('Metab', 'DMSO')) & type == "(+) 12% NT")
-
-x2 = ggplot(short.term.summary.treatment, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = 'Chemotaxis Index (C.I)') +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("OP50", "0.01%\nEGCG",
-                              "Low", "Mid", "High",
-                              "Low", "Mid", "High",
-                              "Low", "Mid", "High",
-                              "Low", "Mid", "High")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  # scale_fill_manual('',values=c("#c750c1", "#f7f00c","#3392d1", "#84d94f","#f25c78" )) +
-  # scale_fill_manual('',values=c("#c750c1",  "#00888b","#2a4858","#f5fa6e","#61c888")) +
-  # scale_fill_manual('',values=c("#c750c1", "#e65089","#ff736b", "#ffa451","#ffd84f" )) +
-  scale_fill_manual('',values=c("#c750c1", "#e65089","#ff9e5f", "#ff7271","#ffcd5f" )) +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15),
-        legend.key.size = unit(0.8, 'cm'),
-        legend.text = element_text(size=13)
-        
-  ) 
-x2
-x2 = x2 + 
-  annotate("text", x = 2, y = 0.70, label = "**", size = 6, color = "red") +
-  annotate("text", x = 9, y = 0.87, label = "**", size = 6, color = "red") +
-  annotate("text", x = 12, y = 0.83, label = "**", size = 6, color = "red") 
-x2
-
-
-## Control
-short.term.summary.control= subset(short.term.summary, (treatment %in% c('OP50', 'EGCG')) & type == "(+) 12% NT")
-x2 = ggplot(short.term.summary.control, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = 'Chemotaxis Index (C.I)',title="Control") +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("OP50", "0.01%\nEGCG")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  # scale_fill_manual('',values=c("#c750c1", "#f7f00c","#3392d1", "#84d94f","#f25c78" )) +
-  # scale_fill_manual('',values=c("#c750c1",  "#00888b","#2a4858","#f5fa6e","#61c888")) +
-  # scale_fill_manual('',values=c("#c750c1", "#e65089","#ff736b", "#ffa451","#ffd84f" )) +
-  scale_fill_manual('',values=c("#c750c1")) +
-  theme(legend.position="none",
-        plot.title = element_text(hjust = 0.5),
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15)
-  ) +
-  annotate("text", x = 2, y = 0.70, label = "**", size = 6, color = "red") 
-x2
-
-short.term.summary.fw= subset(short.term.summary, (treatment %in% c('FWL', 'FWM', 'FWH')) & type == "(+) 12% NT")
-x3 = ggplot(short.term.summary.fw, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = '',title="Field Wine") +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     labels = c("", "", "", "", "" ),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("L", "M", "H")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  # scale_fill_manual('',values=c("#c750c1", "#f7f00c","#3392d1", "#84d94f","#f25c78" )) +
-  # scale_fill_manual('',values=c("#c750c1",  "#00888b","#2a4858","#f5fa6e","#61c888")) +
-  # scale_fill_manual('',values=c("#c750c1", "#e65089","#ff736b", "#ffa451","#ffd84f" )) +
-  scale_fill_manual('',values=c("#e65089")) +
-  theme(legend.position="none",
-        plot.title = element_text(hjust = 0.5),
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15)
-  ) 
-x3
-
-short.term.summary.lw= subset(short.term.summary, (treatment %in% c('LWL', 'LWM', 'LWH')) & type == "(+) 12% NT")
-x4 = ggplot(short.term.summary.lw, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = '',title="Lab Wine") +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     labels = c("", "", "", "", "" ),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("L", "M", "H")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  # scale_fill_manual('',values=c("#c750c1", "#f7f00c","#3392d1", "#84d94f","#f25c78" )) +
-  # scale_fill_manual('',values=c("#c750c1",  "#00888b","#2a4858","#f5fa6e","#61c888")) +
-  # scale_fill_manual('',values=c("#c750c1", "#e65089","#ff736b", "#ffa451","#ffd84f" )) +
-  scale_fill_manual('',values=c("#ff9e5f")) +
-  theme(legend.position="none",
-        plot.title = element_text(hjust = 0.5),
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15)
-  ) 
-x4
-
-short.term.summary.fl= subset(short.term.summary, (treatment %in% c('FLL', 'FLM', 'FLH')) & type == "(+) 12% NT")
-x5 = ggplot(short.term.summary.fl, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = '',title="Field Lees") +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     labels = c("", "", "", "", "" ),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("L", "M", "H")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  # scale_fill_manual('',values=c("#c750c1", "#f7f00c","#3392d1", "#84d94f","#f25c78" )) +
-  # scale_fill_manual('',values=c("#c750c1",  "#00888b","#2a4858","#f5fa6e","#61c888")) +
-  # scale_fill_manual('',values=c("#c750c1", "#e65089","#ff736b", "#ffa451","#ffd84f" )) +
-  scale_fill_manual('',values=c("#ff7271")) +
-  theme(legend.position="none",
-        plot.title = element_text(hjust = 0.5),
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15)
-  ) +
-  annotate("text", x = 1, y = 0.87, label = "**", size = 6, color = "red") 
-x5
-
-short.term.summary.ll = subset(short.term.summary, (treatment %in% c('LLL', 'LLM', 'LLH')) & type == "(+) 12% NT")
-x6 = ggplot(short.term.summary.ll, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = '',title="Lab Lees") +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     labels = c("", "", "", "", "" ),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("L", "M", "H")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  # scale_fill_manual('',values=c("#c750c1", "#f7f00c","#3392d1", "#84d94f","#f25c78" )) +
-  # scale_fill_manual('',values=c("#c750c1",  "#00888b","#2a4858","#f5fa6e","#61c888")) +
-  # scale_fill_manual('',values=c("#c750c1", "#e65089","#ff736b", "#ffa451","#ffd84f" )) +
-  scale_fill_manual('',values=c("#ffcd5f")) +
-  theme(legend.position="none",
-        plot.title = element_text(hjust = 0.5),
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15)
-  ) +
-  annotate("text", x = 1, y = 0.83, label = "**", size = 6, color = "red") 
-x6
-combplot = plot_grid(x2, x3, x4, x5, x6, align = "h", ncol = 5,rel_widths = c(0.20, 0.20, 0.20, 0.20, 0.20 ))
-combplot
-
-
-
-
-
-
-png(filename = file.path(getwd(),"/Paper-short-term-treatment.png"), width = 8, height = 4, units = "in", res = 600)
-# short.term.boxplot = ggarrange(plotlist = list(short.term.x, short.term.y), ncol = 1, nrow = 2,
-#                                labels = c("A", "B"))
-plot(x2)
-dev.off()
-print(paste("Saved at ", getwd()))
+stat_results_df = function(df.t, Y="OP50", alternative="less") {
+  results_df <- data.frame()
+  for (x in df.t$Treatment) {
+    if(x != Y) {
+      t_test_result = t_test_means(df.t, x, Y=Y, alternative=alternative)
+      p_value <- t_test_result$p.value
+      statistics <- t_test_result$statistic
+      estimate <- t_test_result$estimate
+      new_row <- data.frame(group = paste(x,"-", Y),  t = statistics, P_Value = p_value)
+      results_df <- rbind(results_df, new_row)
+    }
+  }
+  return(results_df)
+}
 
 
 ##########################################################################################################
-########################################### LONG TERM MEMORY #############################################
+########################################### LEARNING and MEMORY  ############################################
 ##########################################################################################################
 
 ## Load survival csv file
-ltmraw.csv = read.csv("Learning & Memory - LTM Raw.csv", header = T)
+learn.csv = read.csv("Learning & Memory - Learning.csv", header = T)
+memory.csv = read.csv("Learning & Memory - Memory.csv", header = T)
+
+## Learning
+learn.csv$CI_index = (learn.csv$N_butanone - learn.csv$N_EtoH) / ((learn.csv$N_total - learn.csv$N_origin) + 1e-6)
+learn.csv$Type = "Learning"
+
+## Memory
+memory.csv$CI_index = (memory.csv$N_butanone - memory.csv$N_EtoH) / ((memory.csv$N_total - memory.csv$N_origin) + 1e-6)
+memory.csv$Type = "Memory"
+
+## Summarize
+lam.csv = rbind(learn.csv,memory.csv)
+
+lam.csv$group = lapply(lam.csv$Treatment, rename_wine_or_lees)
+lam.csv$group = factor(lam.csv$group, 
+                       levels = c("OP50", "DMSO", "EGCG","Wine", "Lees"),
+                       labels = c("OP50", "DMSO", "EGCG","Wine", "Lees"))
+
+lam.csv$Treatment = factor(lam.csv$Treatment, 
+                           levels = c("OP50", "DMSO", "EGCG","FWH", "LWH", "FLH", "LLH"),
+                           labels = c("OP50", "DMSO", "EGCG","Field Wine", "Lab Wine", "Field Lees", "Lab Lees"))
+
+lam.csv$Type = factor(lam.csv$Type,
+                      levels=c("Learning", "Memory"),
+                      labels=c("Learning", "Memory"))
+lam.csv$Toxin = factor(lam.csv$Toxin,
+                       levels=c("without toxin", "with toxin"),
+                       labels=c("-12% NT", "+12% NT"))
 
 
-## 1. Without toxin 
-ltmraw.csv$group = lapply(ltmraw.csv$treatment, rename_wine_or_lees)
-ltmraw.csv[ltmraw.csv == "Untreated"] = "OP50"
-ltmraw.csv$CI_index = (ltmraw.csv$N_butanone - ltmraw.csv$N_EtoH) / ((ltmraw.csv$N_total - ltmraw.csv$N_origin) + 1e-6)
-
-## Factor categories
-ltmraw.csv$treatment <- factor(ltmraw.csv$treatment, levels = c('OP50', 'EGCG', 'DMSO','Metab',
-                                                                'FWL', 'FWM', 'FWH',
-                                                                'LWL', 'LWM', 'LWH',
-                                                                'FLL', 'FLM', 'FLH',
-                                                                'LLL', 'LLM', 'LLH'))
-ltmraw.csv$group <- factor(ltmraw.csv$group, levels = c('Control','Field Wine', 'Lab Wine',
-                                                        'Field Lees', 'Lab Lees'))
-
-# healthy.baseline.mean = mean(ltmraw.csv$CI_index[ltmraw.csv == 'U'])
-# healthy.baseline.std = sd(ltmraw.csv$CI_index[ltmraw.csv == 'U'])
-ltmraw.csv$type = "(-) 12% NT"
-
-## Visualize boxplots
-color_scheme = c("#84d94f", "#ffa600", "#f25c78",  "#b64cdf", "#fa5cf2")
-
-
-## 2. With toxin
-ltmraw.toxin.csv = read.csv("Learning & Memory - LTMTox Raw.csv", header = T)
-ltmraw.toxin.csv[ltmraw.toxin.csv == "Untreated w/ toxin"] = "OP50"
-ltmraw.toxin.csv[ltmraw.toxin.csv == "Untreated w/o toxin"] = "U"
-ltmraw.toxin.csv$group = lapply(ltmraw.toxin.csv$treatment, rename_wine_or_lees)
-
-ltmraw.toxin.csv$CI_index = (ltmraw.toxin.csv$N_butanone - ltmraw.toxin.csv$N_EtoH) / ((ltmraw.toxin.csv$N_total - ltmraw.toxin.csv$N_origin) + 1e-6)
-
-## Factor categories
-ltmraw.toxin.csv$treatment <- factor(ltmraw.toxin.csv$treatment, levels = c('U','OP50','EGCG', 'DMSO',  'Metab',
-                                                                            'FWL', 'FWM', 'FWH',
-                                                                            'LWL', 'LWM', 'LWH',
-                                                                            'FLL', 'FLM', 'FLH',
-                                                                            'LLL', 'LLM', 'LLH'))
-ltmraw.toxin.csv$group <- factor(ltmraw.toxin.csv$group, levels = c('Control','Field Wine', 'Lab Wine',
-                                                                    'Field Lees', 'Lab Lees'))
-
-# healthy.baseline.mean = mean(ltmraw.toxin.csv$CI_index[ltmraw.toxin.csv == 'U'])
-# healthy.baseline.std = sd(ltmraw.toxin.csv$CI_index[ltmraw.toxin.csv == 'U'])
-
-color_scheme = c("#84d94f", "#ffa600", "#f25c78",  "#b64cdf", "#fa5cf2")
-ltmraw.toxin.csv = subset(ltmraw.toxin.csv, treatment != 'U')
-ltmraw.toxin.csv$type = "(+) 12% NT"
-
-## Long-term controls
-long.term.csv = rbind(ltmraw.csv, ltmraw.toxin.csv)
-
-## Box plot
-long.term.summary <- long.term.csv %>% 
-  group_by(treatment, group, type) %>%
-  summarise(mean.CI_index = mean(CI_index),
-            sem.CI_index = sd(CI_index),
-            obs.raw = n()) %>%
+lam.df <- lam.csv %>% 
+  group_by(Treatment, group, Type, Toxin) %>%
+  summarise(mean.CI = mean(CI_index) + 1e-6,
+            std.CI = std.error(CI_index),
+            count = n()) %>%
   as.data.frame()
+lam.df
 
-## Control only
-long.term.summary.control = long.term.summary[long.term.summary$group == "Control",]
+write.csv(lam.df, "L&M-values.csv")
+lam.df = subset(lam.df, Treatment != "DMSO")
 
-## Barplot
-long.term.summary.control = long.term.summary.control[long.term.summary.control$treatment != "Metab",]
-y = ggplot(long.term.summary.control, aes(fill=type, y=mean.CI_index, x=treatment)) +
-  theme_classic() + labs(x = '', y = 'Chemotaxis Index (C.I)') +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("OP50", "0.01% EGCG", "0.1% DMSO")) +
+## Statistics
+##########################################################################################################
+########################################### LEARNING############################################
+##########################################################################################################
+## 1. Between -12 NT and +12 NT
+dat.tox = subset(lam.df, Treatment == "OP50" & Type == "Learning")
+## x = -12NT, y = +12NT, alternative = greater
+x.mean = dat.tox[dat.tox$Toxin == "-12% NT", "mean.CI"]
+x.std = dat.tox[dat.tox$Toxin == "-12% NT", "std.CI"]
+x.obs= dat.tox[dat.tox$Toxin == "-12% NT", "count"]
+
+y.mean = dat.tox[dat.tox$Toxin == "+12% NT", "mean.CI"]
+y.std = dat.tox[dat.tox$Toxin == "+12% NT", "std.CI"]
+y.obs= dat.tox[dat.tox$Toxin == "+12% NT", "count"]
+
+res.learn.tox = tsum.test(x.mean, x.std, x.obs,
+                          y.mean, y.std, y.obs,
+                          alternative = "greater")
+res.learn.tox
+
+
+### Visualization
+color_scheme = c("#f25c78",  "#84d94e","#ffa600", "#b64cdf")
+lam.df.learn = subset(lam.df, Type == "Learning")
+lam.df.learn$mean.CI[4] = subset(subset(learn.csv, Treatment == "FWH"), CI_index != 0)$CI_index
+lam.df.learn$name = paste(lam.df.learn$Treatment, lam.df.learn$Toxin)
+lam.df.learn$name = factor(lam.df.learn$name, 
+                           levels = c("OP50 -12% NT", "OP50 +12% NT",
+                                      "EGCG +12% NT",
+                                      "Field Wine +12% NT","Lab Wine +12% NT",
+                                      "Field Lees +12% NT", "Lab Lees +12% NT"))
+
+## 2. Across treatment
+dat.treat = subset(lam.csv, Toxin == "+12% NT" & Type == "Learning")
+res.learn.treat = DunnettTest(x=dat.treat$CI_index, g=dat.treat$Treatment)
+# res.learn.treat = stat_results_df(subset(lam.df.learn, Toxin !="-12% NT"), alternative = "greater")
+res.learn.treat
+
+p = ggplot(lam.df.learn, aes(name,mean.CI,fill=group)) +
+  theme_classic() + labs(x = '', y = 'Learning Index') + 
+  theme(axis.title.y = element_text(size = 14), axis.text.x=element_text(size=13), axis.text.y=element_text(size=12)) +
   geom_bar(stat="identity", color="black",position=position_dodge()) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + sem.CI_index/sqrt(obs.raw)), width=.2,position=position_dodge(.9)) +
-  scale_fill_manual('',values=c("#f59541","#c750c1")) +
-  theme(axis.text.x = element_text(color="black", size=12),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        legend.key.size = unit(0.8, 'cm'),
-        legend.text = element_text(size=13),
-        axis.title.y = element_text(size=15)
-        
-  ) 
-y
+  geom_errorbar(aes(ymin=mean.CI, ymax=mean.CI + std.CI), width=.2,position=position_dodge(.9)) +
+  # facet_grid('. ~ Toxin', scales="free", switch = "x", space='free') +
+  scale_fill_manual(values=color_scheme) +
+  theme(legend.position="none") + 
+  theme(strip.placement = "outside") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y =element_text(size=16),
+        plot.title=element_text(hjust=0.5),
+        axis.text.x = element_markdown(size=10),
+        axis.text.y = element_text(size=11),
+        legend.position="none",
+        strip.text.x = element_text(size=13, face = "bold"),
+        strip.background = element_blank()) +
+  scale_x_discrete(labels=c("OP50 <br><i>E. coli</i>", "OP50 <br><i>E. coli</i>",
+                            "200 uM <br> EGCG",
+                            "Field Wine", "Lab Wine", "Field Lees",
+                            "Lab Lees")) +
+  theme(plot.margin = unit(c(0,0,2,0), "lines")) +
+  coord_cartesian(ylim=c(0,1), clip="off") 
+p
 
-######## STATISTICS FOR SHORT TERM MEMORY ########
-## Unpaired t-test between +/- 12% NT
-## A. OP50
-tox_norm1 <- c(rnorm(10^5, mean = round(subset(long.term.summary.control, treatment == "OP50" & type == "(+) 12% NT")[,"mean.CI_index"],2),
-                     sd = round(subset(long.term.summary.control, treatment == "OP50" & type == "(+) 12% NT")[,"sem.CI_index"],2)
-)) ## 0.16 +/- 0.23
+tox.vs.notox <- tibble(
+  x = c(1, 1, 2,2),
+  y = c(0.84, 0.92, 0.92, 0.62))
 
-notox_norm1 <- c(rnorm(10^5, mean = round(subset(long.term.summary.control, treatment == "OP50" & type == "(-) 12% NT")[,"mean.CI_index"],2),
-                       sd = round(subset(long.term.summary.control, treatment == "OP50" & type == "(-) 12% NT")[,"sem.CI_index"],2)
-))  ## 0.81 +/- 0.01
-# t.test(tox_norm1, notox_norm1) ##  p < 0.0001
-t.test(subset(long.term.csv, treatment == "OP50" & type == "(+) 12% NT")[,"CI_index"],
-       subset(long.term.csv, treatment == "OP50" & type == "(-) 12% NT")[,"CI_index"])
-
-
-## B. DMSO
-# tox_norm2 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(+) 12% NT")[,"mean.CI_index"],2),
-#                     sd = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(+) 12% NT")[,"sem.CI_index"],2)
-# )) ## 0.46 +/- 0.-4
-# 
-# notox_norm2 <- c(rnorm(10^5, mean = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(-) 12% NT")[,"mean.CI_index"],2),
-#                       sd = round(subset(short.term.summary.control, treatment == "DMSO" & type == "(-) 12% NT")[,"sem.CI_index"],2)
-# ))  ## 0.72 +/- 0.02
-# t.test(tox_norm2, notox_norm2) ##  p < 0.0001
-t.test(subset(short.term.csv, treatment == "DMSO" & type == "(+) 12% NT")[,"CI_index"],
-       subset(short.term.csv, treatment == "DMSO" & type == "(-) 12% NT")[,"CI_index"])
+p = p + 
+  annotate("text", x = 1.5, y = 0.94, label = "*", size = 7, color = "black") +
+  geom_line(data = tox.vs.notox, aes(x= x, y = y, group=1), inherit.aes = F) 
+  # annotate("text", x = 3, y = 0.687, label = "***", size = 6, color = "#960101")  
+  # annotate("text", x = 6, y = 0.475, label = "*", size = 6, color = "#960101") +
+  # annotate("text", x = 7, y = 0.519, label = "**", size = 6, color = "#960101")
+p
 
 
-## C. EGCG
-t.test(subset(short.term.csv, treatment == "EGCG" & type == "(+) 12% NT")[,"CI_index"],
-       subset(short.term.csv, treatment == "EGCG" & type == "(-) 12% NT")[,"CI_index"])
 
-dmso <- tibble(
-  x = c(2.77, 2.77, 3.23, 3.23),
-  y = c(0.78, 0.83, 0.83, 0.55)
-) ## p < 0.01
+##########################################################################################################
+########################################### MEMORY  ############################################
+##########################################################################################################
+
+## 1. Between -12 NT and +12 NT
+dat.tox = subset(lam.df, Treatment == "OP50" & Type == "Memory")
+## x = -12NT, y = +12NT, alternative = greater
+x.mean = dat.tox[dat.tox$Toxin == "-12% NT", "mean.CI"]
+x.std = dat.tox[dat.tox$Toxin == "-12% NT", "std.CI"]
+x.obs= dat.tox[dat.tox$Toxin == "-12% NT", "count"]
+
+y.mean = dat.tox[dat.tox$Toxin == "+12% NT", "mean.CI"]
+y.std = dat.tox[dat.tox$Toxin == "+12% NT", "std.CI"]
+y.obs= dat.tox[dat.tox$Toxin == "+12% NT", "count"]
+
+res.mem.tox = tsum.test(x.mean, x.std, x.obs,
+                          y.mean, y.std, y.obs,
+                          alternative = "greater")
+res.mem.tox ## p = 0.1535
+
+## 2. Across treatment
+dat.treat = subset(lam.csv, Toxin == "+12% NT" & Type == "Memory")
+res.mem.treat = DunnettTest(x=dat.treat$CI_index, g=dat.treat$Treatment)
+res.mem.treat
 
 
-y1 = y + 
-  annotate("text", x = 3.0, y = 0.85, label = "**", size = 6, color = "black") +
-  geom_line(data = dmso, aes(x= x, y = y, group=1), inherit.aes = F)
-y1
+### Visualization
+lam.df.mem = subset(lam.df, Type == "Memory")
+lam.df.mem$name = paste(lam.df.mem$Treatment, lam.df.mem$Toxin)
+lam.df.mem$name = factor(lam.df.mem$name, 
+                           levels = c("OP50 -12% NT", "OP50 +12% NT",
+                                      "EGCG +12% NT",
+                                      "Field Wine +12% NT","Lab Wine +12% NT",
+                                      "Field Lees +12% NT", "Lab Lees +12% NT"))
 
+# res.mem.treat = stat_results_df(subset(lam.df.mem, Toxin !="-12% NT"), alternative = "greater")
+# res.mem.treat
 
-## Dunnet multiple comparison test among +12% NT
-control.tox = subset(long.term.csv, type == "(+) 12% NT" & group == "Control" & treatment != "Metab")
-summary(aov(formula = CI_index ~ treatment, data = control.tox))
-DunnettTest(x=control.tox$CI_index, g=control.tox$treatment) ## not significant
+q = ggplot(lam.df.mem, aes(name,mean.CI,fill=group)) +
+  theme_classic() + labs(x = '', y = 'Memory Index') + 
+  theme(axis.title.y = element_text(size = 14), axis.text.x=element_text(size=13), axis.text.y=element_text(size=12)) +
+  geom_bar(stat="identity", color="black",position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean.CI, ymax=mean.CI + std.CI), width=.2,position=position_dodge(.9)) +
+  # facet_grid('. ~ Toxin', scales="free", switch = "x", space='free') +
+  scale_fill_manual(values=color_scheme) +
+  theme(legend.position="none") + 
+  theme(strip.placement = "outside") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y =element_text(size=16),
+        plot.title=element_text(hjust=0.5),
+        axis.text.x = element_markdown(size=10),
+        axis.text.y = element_text(size=11),
+        legend.position="none",
+        strip.text.x = element_text(size=13, face = "bold"),
+        strip.background = element_blank()) +
+  scale_x_discrete(labels=c("OP50 <br><i>E. coli</i>", "OP50 <br><i>E. coli</i>",
+                            "200 uM <br> EGCG",
+                            "Field Wine", "Lab Wine", "Field Lees",
+                            "Lab Lees")) +
+  theme(plot.margin = unit(c(0,0,2,0), "lines")) +
+  coord_cartesian(xlim=c(1,7), ylim=c(0,1), clip="off") 
+q
 
-## What if -12% NT
-control.notox = subset(long.term.csv, type == "(-) 12% NT" & group == "Control" & treatment != "Metab")
-summary(aov(formula = CI_index ~ treatment, data = control.notox))
-DunnettTest(x=control.notox$CI_index, g=control.notox$treatment) ## not significant
+tox.vs.notox <- tibble(
+  x = c(1, 1, 2,2),
+  y = c(0.77, 0.88, 0.88, 0.75))
 
-png(filename = file.path(getwd(),"/Paper-long-term.png"), width = 6, height = 4, units = "in", res = 600)
-# short.term.boxplot = ggarrange(plotlist = list(short.term.x, short.term.y), ncol = 1, nrow = 2,
-#                                labels = c("A", "B"))
-plot(y1)
-dev.off()
+q = q + 
+  annotate("text", x = 1.5, y = 0.93, label = "n.s", size = 5, color = "black") +
+  geom_line(data = tox.vs.notox, aes(x= x, y = y, group=1), inherit.aes = F)  
+  # annotate("segment", x = 5.5, xend = 8, y = -0.21, yend = -0.21) +
+  # annotate("text", x = 5, y = -0.21, label = "+ 12% NT", fontface =2, size=5)  +
+  # annotate("text", x = 3, y = 0.98, label = "***", size=6, color = "#960101")
+q
+
+ggsave(plot=p, filename="Learning.png", width=8, height=4, dpi=600)
+# png(filename = file.path(getwd(),"/Learning.png"), width = 8, height = 3, units = "in", res = 600)
+# plot(p)
+# dev.off()
 print(paste("Saved at ", getwd()))
 
-## Tapuy extracts
-treatment.tox = subset(long.term.csv, type == "(+) 12% NT" &  !(treatment %in% c('Metab', 'DMSO')) )
-summary(aov(formula = CI_index ~ treatment, data = treatment.tox))
-DunnettTest(x=treatment.tox$CI_index, g=treatment.tox$treatment)
-
-long.term.summary.treatment = subset(long.term.summary, !(treatment %in% c('Metab', 'DMSO')) & type == "(+) 12% NT")
-
-y2 = ggplot(long.term.summary.treatment, aes(y=mean.CI_index, x=treatment, fill=group)) +
-  theme_classic() + labs(x = '', y = 'Chemotaxis Index (C.I)') +
-  geom_bar(stat="identity", color="black",position=position_dodge()) +
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1),
-                     limits = c(0,1.0)) +
-  scale_x_discrete(labels = c("OP50", "0.01%\nEGCG",
-                              "Low", "Mid", "High",
-                              "Low", "Mid", "High",
-                              "Low", "Mid", "High",
-                              "Low", "Mid", "High")) +
-  geom_errorbar(aes(ymin=mean.CI_index, ymax = mean.CI_index + (sem.CI_index/sqrt(obs.raw))), width=.2,position=position_dodge(.9)) +
-  scale_fill_manual('',values=c("#c750c1", "#e65089","#ff9e5f", "#ff7271","#ffcd5f" )) +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(color="black", size=11),
-        axis.line.y = element_line(colour = 'black', size=0.5, linetype='solid'),
-        axis.text.y = element_text(color = 'black', size=10),
-        axis.title.y = element_text(size=15),
-        legend.key.size = unit(0.8, 'cm'),
-        legend.text = element_text(size=13)
-        
-  ) 
-y2
-
-# x2 = x2 + 
-#   annotate("text", x = 2, y = 0.70, label = "**", size = 6, color = "red") +
-#   annotate("text", x = 9, y = 0.87, label = "**", size = 6, color = "red") +
-#   annotate("text", x = 12, y = 0.83, label = "**", size = 6, color = "red") 
-# x2
-
-png(filename = file.path(getwd(),"/Paper-long-term-treatment.png"), width = 8, height = 4, units = "in", res = 600)
-# short.term.boxplot = ggarrange(plotlist = list(short.term.x, short.term.y), ncol = 1, nrow = 2,
-#                                labels = c("A", "B"))
-plot(y2)
-dev.off()
+ggsave(plot=q, filename="Memory.png", width=8, height=4, dpi=600)
+# png(filename = file.path(getwd(),"/Memory.png"), width = 8, height = 3, units = "in", res = 600)
+# plot(q)
+# dev.off()
 print(paste("Saved at ", getwd()))
+
+all = ggarrange(plotlist = list(p, q), ncol = 1, nrow = 2, labels = c("A", "B"))
+ggsave(plot=all, filename="Combined.png", width=8, height=4, dpi=600)
+
+
+
+
+
+
+
