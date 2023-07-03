@@ -31,7 +31,7 @@ function processFile(input, output, file, suffix) {
 	// Leave the print statements until things work, then remove them.
 	setBatchMode(true);
 	figfile = input + File.separator + file;
-	blank = "/Users/jcbacong/Documents/BCH 205/BZ555/blank 06-24-2022.tif";
+	blank = "/Users//blank 06-24-2022.tif";
 	
 	// Remove the scale and bg noise
 	open(figfile);
